@@ -1,12 +1,14 @@
 import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuidv4 } from "uuid";
+import NodeCache from "node-cache";
 import s3    from "../config/aws.js";
 import Video from "../models/Video.js";
 
 const BUCKET  = process.env.AWS_S3_BUCKET;
 const REGION  = process.env.AWS_REGION;
 const EXPIRES = parseInt(process.env.S3_PRESIGNED_URL_EXPIRES || "300", 10);
+const cache   = new NodeCache({ stdTTL: 60 });
 
 // POST /api/videos/presigned-url
 export const getPresignedUrl = async (req, res) => {
@@ -15,11 +17,11 @@ export const getPresignedUrl = async (req, res) => {
     if (!fileName || !mimeType)
       return res.status(400).json({ error: "fileName and mimeType are required" });
 
-    const ext    = fileName.split(".").pop();
-    const s3Key  = `videos/${uuidv4()}.${ext}`;
-    const command = new PutObjectCommand({ Bucket: BUCKET, Key: s3Key, ContentType: mimeType });
+    const ext      = fileName.split(".").pop();
+    const s3Key    = `videos/${uuidv4()}.${ext}`;
+    const command  = new PutObjectCommand({ Bucket: BUCKET, Key: s3Key, ContentType: mimeType });
     const presignedUrl = await getSignedUrl(s3, command, { expiresIn: EXPIRES });
-    const s3Url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${s3Key}`;
+    const s3Url    = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${s3Key}`;
 
     res.json({ presignedUrl, s3Key, s3Url });
   } catch (err) {
@@ -53,9 +55,14 @@ export const createVideo = async (req, res) => {
 // GET /api/videos
 export const getVideos = async (req, res) => {
   try {
-    const page     = parseInt(req.query.page  || "1",  10);
-    const limit    = parseInt(req.query.limit || "12", 10);
-    const query    = { status: "published" };
+    const cacheKey = `videos_${req.query.page || 1}_${req.query.category || "all"}`;
+
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const page  = parseInt(req.query.page  || "1",  10);
+    const limit = parseInt(req.query.limit || "12", 10);
+    const query = { status: "published" };
 
     if (req.query.category) query.category = req.query.category;
     if (req.query.search)   query.title = { $regex: req.query.search, $options: "i" };
@@ -67,7 +74,9 @@ export const getVideos = async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit);
 
-    res.json({ videos, pagination: { total, page, pages: Math.ceil(total / limit), limit } });
+    const result = { videos, pagination: { total, page, pages: Math.ceil(total / limit), limit } };
+    cache.set(cacheKey, result);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -116,34 +125,6 @@ export const deleteVideo = async (req, res) => {
     await video.save();
 
     res.json({ message: "Video deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
-
-import NodeCache from "node-cache";
-const cache = new NodeCache({ stdTTL: 60 }); // cache for 60 seconds
-
-export const getVideos = async (req, res) => {
-  try {
-    const cacheKey = `videos_${req.query.page || 1}_${req.query.category || "all"}`;
-    
-    // Check cache first
-    const cached = cache.get(cacheKey);
-    if (cached) return res.json(cached);
-
-    // If not cached, hit MongoDB
-    const page  = parseInt(req.query.page  || "1",  10);
-    const limit = parseInt(req.query.limit || "12", 10);
-    // ... rest of your existing code ...
-
-    const result = { videos, pagination: { total, page, pages: Math.ceil(total / limit), limit } };
-    
-    // Save to cache
-    cache.set(cacheKey, result);
-    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

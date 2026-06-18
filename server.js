@@ -18,12 +18,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
 
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/auth",    authRoutes);
 app.use("/api/videos",  videoRoutes);
 app.use("/api/admin",   adminRoutes);
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
+
 app.get("/", (req, res) => res.json({ message: "Cinimatrix API running 🎬" }));
 
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
